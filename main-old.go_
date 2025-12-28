@@ -1,0 +1,54 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/PuerkitoBio/goquery"
+	"github.com/gocolly/colly"
+)
+
+func main() {
+	startTime := time.Now()
+
+	c := colly.NewCollector()
+	gymCollector := c.Clone()
+	emailCollector := c.Clone()
+
+	emails := []string{}
+
+	c.OnHTML("div.kaupunkilaatikko form#kaupunki-valinta select#kaupunki", func(e *colly.HTMLElement) {
+
+		fmt.Println("Collecting cities")
+		e.DOM.Children().Each(func(i int, s *goquery.Selection) {
+			value, _ := s.Attr("value")
+			if value != "-1" {
+				fmt.Println("gymCollector: ", value, "\nCity #", i)
+				gymCollector.Visit(fmt.Sprintf("https://kuntosali.fi/kaupungit/%v/", value))
+			}
+		})
+	})
+
+	gymCollector.OnHTML("div.salilistaus-simple a.salin-nimi-kaupunki[href]", func(e *colly.HTMLElement) {
+		url := e.Attr("href")
+		fmt.Println("\temailCollector URL: ", url)
+		emailCollector.Visit(url)
+	})
+
+	emailCollector.OnHTML("div.sali-data div#salin-info p", func(e *colly.HTMLElement) {
+		text := e.Text
+		if strings.Contains(text, "@") && !slices.Contains(emails, text) {
+			fmt.Println("\t\t***\tCollected email: ", text, "\t***\n", e.Request.URL)
+			emails = append(emails, text)
+		}
+	})
+
+	c.Visit("https://kuntosali.fi")
+
+	fmt.Println("Emails found: ", len(emails))
+	fmt.Printf("Finished in %v minutes\n", time.Since(startTime).Minutes())
+	os.WriteFile("emails.txt", []byte(strings.Join(emails, "\n")), 0644)
+}

@@ -5,84 +5,109 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/gocolly/colly"
 )
 
-func CollectCities() []string {
-	collector := colly.NewCollector()
+const PARALLELISM = 4
+const DELAY = 30
+const RANDOM_DELAY = 60
+const TIMEOUT = 120
 
-	cities := []string{}
-	citiesCollected := false
+func GetCities() []string {
+  cities := []string{}
+	
+  c := colly.NewCollector(colly.CacheDir("./cache"))
+  c.SetRequestTimeout(TIMEOUT * time.Second)
+  
+  c.OnHTML("div.kaupunkilaatikko form#kaupunki-valinta select#kaupunki", func(e *colly.HTMLElement) {
+		e.DOM.Children().Each(func(i int, s *goquery.Selection) {
+			value, _ := s.Attr("value")
+			if value != "-1" {
+				cities = append(cities, fmt.Sprintf("https://kuntosali.fi/kaupungit/%v/", value))
+			}
+		})
+	})
 
-	collector.OnHTML("#kaupunki", func(e *colly.HTMLElement) {
-		if !citiesCollected {
-			e.DOM.Children().Each(func(i int, s *goquery.Selection) {
-				value, _ := s.Attr("value")
-				if value != "-1" {
-					cities = append(cities, value)
-				}
-			})
-			citiesCollected = true
+  c.OnError(func(r *colly.Response, e error) {
+    fmt.Println("Request URL:", r.Request.URL, "\nError:", e)
+  })
+
+  c.Visit("https://kuntosali.fi")
+  
+  return cities
+}
+
+func GetGyms(cities []string) []string {
+  gyms := []string{}
+  
+  c := colly.NewCollector(colly.Async(true), colly.CacheDir("./cache"))
+  c.Limit(&colly.LimitRule{Parallelism: PARALLELISM, Delay: DELAY * time.Second, RandomDelay: RANDOM_DELAY * time.Second})
+  c.SetRequestTimeout(TIMEOUT * time.Second)
+
+  c.OnHTML("div.salilistaus-simple a.salin-nimi-kaupunki[href]", func(e *colly.HTMLElement) {
+		url := e.Attr("href")
+		gyms = append(gyms, url)
+	})
+
+  c.OnError(func(r *colly.Response, e error) {
+    fmt.Println("Request URL:", r.Request.URL, "\nError:", e)
+  })
+
+  for _, city := range cities {
+		c.Visit(city)
+	}
+
+  c.Wait()
+
+  return gyms
+}
+
+func GetEmails(gyms []string) []string {
+  emails := []string{}
+  
+  c := colly.NewCollector(colly.Async(true), colly.CacheDir("./cache"))
+  c.Limit(&colly.LimitRule{Parallelism: PARALLELISM, Delay: DELAY * time.Second, RandomDelay: RANDOM_DELAY * time.Second})
+  c.SetRequestTimeout(TIMEOUT * time.Second)
+
+  c.OnHTML("div.sali-data div#salin-info p", func(e *colly.HTMLElement) {
+		text := e.Text
+		if strings.Contains(text, "@") && !slices.Contains(emails, text) {
+			emails = append(emails, strings.TrimSpace(text))
 		}
 	})
 
-	collector.Visit("https://kuntosali.fi")
-	return cities
-}
+  c.OnError(func(r *colly.Response, e error) {
+    fmt.Println("Request URL:", r.Request.URL, "\nError:", e)
+  })
 
-func CollectGymUrls(city string) []string {
-	collector := colly.NewCollector()
+  for _, gym := range gyms {
+		c.Visit(gym)
+	}
+	
+  c.Wait()
 
-	gymUrls := []string{}
-
-	collector.OnHTML(".salilistaus-simple", func(e *colly.HTMLElement) {
-		url, _ := e.DOM.Children().Children().Attr("href")
-		gymUrls = append(gymUrls, url)
-	})
-
-	collector.Visit(fmt.Sprintf("https://kuntosali.fi/kaupungit/%v/", city))
-	return gymUrls
-}
-
-func CollectGymEmail(gymUrl string) string {
-	collector := colly.NewCollector()
-	email := ""
-	collector.OnHTML("#salin-info", func(e *colly.HTMLElement) {
-		text := e.DOM.Children().Text()
-		if strings.Contains(text, "@") {
-			email = text
-		}
-	})
-
-	collector.Visit(gymUrl)
-	return email
+  return emails
 }
 
 func main() {
-	fmt.Println("Getting cities with gyms")
-	cities := CollectCities()
-	gymUrls := []string{}
-	emails := []string{}
+	startTime := time.Now()
+	
+  fmt.Println("Collecting cities")
+  cities := GetCities()
+  
+	fmt.Println("Collecting gyms")
+  gyms := GetGyms(cities)
 
-	fmt.Printf("Found %v cities\n", len(cities))
-
-	for i, city := range cities {
-		fmt.Printf("Getting gym urls, city %v/%v\n", i+1, len(cities))
-		gymUrls = append(gymUrls, CollectGymUrls(city)...)
-	}
-
-	fmt.Println(gymUrls)
-
-	for i, gymUrl := range gymUrls {
-		fmt.Printf("Getting gym email, gym %v/%v\n", i+1, len(gymUrls))
-		email := CollectGymEmail(gymUrl)
-		if email != "" && !slices.Contains(emails, email) {
-			emails = append(emails, email)
-		}
-	}
+  fmt.Println("Collecting emails")
+  emails := GetEmails(gyms)
 
 	fmt.Println("Emails found: ", len(emails))
+	fmt.Printf("Finished in %v seconds\n", time.Since(startTime).Seconds())
+  
 	os.WriteFile("emails.txt", []byte(strings.Join(emails, "\n")), 0644)
+
+	os.RemoveAll("./cache/")
 }
