@@ -25,12 +25,7 @@ func GetCities() []string {
 	c.SetRequestTimeout(TIMEOUT * time.Second)
 
 	c.OnHTML("div.kaupunkilaatikko form#kaupunki-valinta select#kaupunki", func(e *colly.HTMLElement) {
-		e.DOM.Children().Each(func(i int, s *goquery.Selection) {
-			value, _ := s.Attr("value")
-			if value != "-1" {
-				cities = append(cities, fmt.Sprintf("https://kuntosali.fi/kaupungit/%v/", value))
-			}
-		})
+		cities = append(cities, parseCitiesFromSelection(e.DOM)...)
 	})
 
 	c.OnError(func(r *colly.Response, e error) {
@@ -55,7 +50,10 @@ func GetGyms(cities []string) []string {
 	c.SetRequestTimeout(TIMEOUT * time.Second)
 
 	c.OnHTML("div.salilistaus-simple a.salin-nimi-kaupunki[href]", func(e *colly.HTMLElement) {
-		url := e.Attr("href")
+		url, ok := parseGymURLFromElement(e)
+		if !ok {
+			return
+		}
 		mu.Lock()
 		gyms = append(gyms, url)
 		mu.Unlock()
@@ -87,17 +85,12 @@ func GetEmails(gyms []string) []string {
 	c.SetRequestTimeout(TIMEOUT * time.Second)
 
 	c.OnHTML("div.sali-data div#salin-info p", func(e *colly.HTMLElement) {
-		text := strings.TrimSpace(e.Text)
-		addr, err := mail.ParseAddress(text)
-		if err == nil {
-			text = addr.Address
-		}
-
-		if isValidEmail(text) {
+		email, ok := parseEmailFromText(e.Text)
+		if ok {
 			mu.Lock()
-			exists := slices.Contains(emails, text)
+			exists := slices.Contains(emails, email)
 			if !exists {
-				emails = append(emails, text)
+				emails = append(emails, email)
 			}
 			mu.Unlock()
 		}
@@ -153,4 +146,78 @@ func isValidEmail(s string) bool {
 	}
 
 	return addr.Address == s
+}
+
+func parseCitiesFromSelection(selection *goquery.Selection) []string {
+	cities := []string{}
+	selection.Children().Each(func(i int, s *goquery.Selection) {
+		value, ok := s.Attr("value")
+		if !ok || value == "-1" || strings.TrimSpace(value) == "" {
+			return
+		}
+		cities = append(cities, fmt.Sprintf("https://kuntosali.fi/kaupungit/%v/", value))
+	})
+	return cities
+}
+
+func parseGymURLFromElement(e *colly.HTMLElement) (string, bool) {
+	url := strings.TrimSpace(e.Attr("href"))
+	return url, url != ""
+}
+
+func parseEmailFromText(text string) (string, bool) {
+	trimmed := strings.TrimSpace(text)
+	addr, err := mail.ParseAddress(trimmed)
+	if err == nil {
+		trimmed = addr.Address
+	}
+
+	if !isValidEmail(trimmed) {
+		return "", false
+	}
+
+	return trimmed, true
+}
+
+func parseCitiesFromHTML(html string) ([]string, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return nil, err
+	}
+	selection := doc.Find("div.kaupunkilaatikko form#kaupunki-valinta select#kaupunki")
+	return parseCitiesFromSelection(selection), nil
+}
+
+func parseGymURLsFromHTML(html string) ([]string, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return nil, err
+	}
+
+	urls := []string{}
+	doc.Find("div.salilistaus-simple a.salin-nimi-kaupunki[href]").Each(func(i int, s *goquery.Selection) {
+		url := strings.TrimSpace(s.AttrOr("href", ""))
+		if url != "" {
+			urls = append(urls, url)
+		}
+	})
+
+	return urls, nil
+}
+
+func parseEmailsFromHTML(html string) ([]string, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return nil, err
+	}
+
+	emails := []string{}
+	doc.Find("div.sali-data div#salin-info p").Each(func(i int, s *goquery.Selection) {
+		email, ok := parseEmailFromText(s.Text())
+		if ok && !slices.Contains(emails, email) {
+			emails = append(emails, email)
+		}
+	})
+
+	return emails, nil
 }
