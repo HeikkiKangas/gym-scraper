@@ -70,11 +70,9 @@ func parseGymURLsFromHTML(html string) ([]string, error) {
 	}
 
 	urls := []string{}
+	seen := make(map[string]struct{})
 	doc.Find("div.salilistaus-simple a.salin-nimi-kaupunki[href]").Each(func(i int, s *goquery.Selection) {
-		url := strings.TrimSpace(s.AttrOr("href", ""))
-		if url != "" {
-			urls = append(urls, url)
-		}
+		AddUniqueURL(seen, &urls, s.AttrOr("href", ""))
 	})
 
 	return urls, nil

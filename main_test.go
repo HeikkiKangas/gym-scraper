@@ -38,6 +38,7 @@ func TestParseGymURLsFromHTML(t *testing.T) {
 <div class="salilistaus-simple">
   <a class="salin-nimi-kaupunki" href="https://example.com/gym-1">Gym 1</a>
   <a class="salin-nimi-kaupunki" href="  https://example.com/gym-2  ">Gym 2</a>
+	<a class="salin-nimi-kaupunki" href="https://example.com/gym-1/#details">Duplicate</a>
   <a class="salin-nimi-kaupunki">No href</a>
 </div>`
 
@@ -47,8 +48,8 @@ func TestParseGymURLsFromHTML(t *testing.T) {
 	}
 
 	want := []string{
-		"https://example.com/gym-1",
-		"https://example.com/gym-2",
+		"https://example.com/gym-1/",
+		"https://example.com/gym-2/",
 	}
 
 	if !reflect.DeepEqual(got, want) {

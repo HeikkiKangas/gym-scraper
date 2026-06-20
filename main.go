@@ -43,6 +43,7 @@ func GetCities(cfg ScraperConfig, metrics *PhaseMetrics) []string {
 
 func GetGyms(cities []string, cfg ScraperConfig, metrics *PhaseMetrics) []string {
 	gyms := []string{}
+	seenGyms := make(map[string]struct{})
 	var mu sync.Mutex
 
 	c := colly.NewCollector(colly.Async(true), colly.CacheDir("./cache"))
@@ -62,7 +63,7 @@ func GetGyms(cities []string, cfg ScraperConfig, metrics *PhaseMetrics) []string
 			return
 		}
 		mu.Lock()
-		gyms = append(gyms, url)
+		AddUniqueURL(seenGyms, &gyms, url)
 		mu.Unlock()
 	})
 
