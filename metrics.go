@@ -29,9 +29,9 @@ type PhaseMetrics struct {
 }
 
 type ScraperMetrics struct {
-	Cities PhaseMetrics
-	Gyms   PhaseMetrics
-	Emails PhaseMetrics
+	Cities *PhaseMetrics
+	Gyms   *PhaseMetrics
+	Emails *PhaseMetrics
 }
 
 func NewScraperMetrics() ScraperMetrics {
@@ -42,8 +42,8 @@ func NewScraperMetrics() ScraperMetrics {
 	}
 }
 
-func newPhaseMetrics(name string) PhaseMetrics {
-	return PhaseMetrics{Name: name, StatusCounts: make(map[int]int64)}
+func newPhaseMetrics(name string) *PhaseMetrics {
+	return &PhaseMetrics{Name: name, StatusCounts: make(map[int]int64)}
 }
 
 func (m *PhaseMetrics) Start() {
@@ -95,6 +95,12 @@ func (m *PhaseMetrics) RecordFailedURL(rawURL string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.FailedURLs = append(m.FailedURLs, rawURL)
+}
+
+func (m *PhaseMetrics) FailedURLsSnapshot() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.FailedURLs...)
 }
 
 func registerMetricsHooks(c *colly.Collector, metrics *PhaseMetrics) {
