@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/mail"
-	"slices"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -85,10 +84,14 @@ func parseEmailsFromHTML(html string) ([]string, error) {
 	}
 
 	emails := []string{}
+	seen := make(map[string]struct{})
 	doc.Find("div.sali-data div#salin-info p").Each(func(i int, s *goquery.Selection) {
 		email, ok := parseEmailFromText(s.Text())
-		if ok && !slices.Contains(emails, email) {
-			emails = append(emails, email)
+		if ok {
+			if _, exists := seen[email]; !exists {
+				seen[email] = struct{}{}
+				emails = append(emails, email)
+			}
 		}
 	})
 

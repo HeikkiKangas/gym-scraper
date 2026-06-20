@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -85,6 +84,7 @@ func GetGyms(cities []string, cfg ScraperConfig, metrics *PhaseMetrics) []string
 
 func GetEmails(gyms []string, cfg ScraperConfig, metrics *PhaseMetrics) []string {
 	emails := []string{}
+	seenEmails := make(map[string]struct{})
 	var mu sync.Mutex
 
 	c := colly.NewCollector(colly.Async(true), colly.CacheDir("./cache"))
@@ -102,8 +102,8 @@ func GetEmails(gyms []string, cfg ScraperConfig, metrics *PhaseMetrics) []string
 		email, ok := parseEmailFromText(e.Text)
 		if ok {
 			mu.Lock()
-			exists := slices.Contains(emails, email)
-			if !exists {
+			if _, exists := seenEmails[email]; !exists {
+				seenEmails[email] = struct{}{}
 				emails = append(emails, email)
 			}
 			mu.Unlock()
