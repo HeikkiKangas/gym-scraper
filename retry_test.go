@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -50,6 +52,75 @@ func TestParseRetryAfter(t *testing.T) {
 	date := now.Add(12 * time.Second).Format(http.TimeFormat)
 	if got, ok := ParseRetryAfter(date, now); !ok || got != 12*time.Second {
 		t.Fatalf("date Retry-After = (%s, %v)", got, ok)
+	}
+}
+
+func TestTimeoutIsRetriedAndRecorded(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			time.Sleep(40 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := DefaultScraperConfig()
+	phaseCfg := PhaseConfig{
+		Parallelism: 1,
+		Delay:       time.Millisecond,
+		Timeout:     10 * time.Millisecond,
+	}
+	cfg.MinDelay = time.Millisecond
+	cfg.MaxRetries = 1
+	metrics := newPhaseMetrics("timeout-test")
+	c := NewCollector(phaseCfg)
+	registerMetricsHooks(c, metrics)
+	limiter := NewAdaptiveLimiter(phaseCfg, cfg)
+	registerAdaptiveHooks(c, limiter)
+	registerRetryHook(c, phaseCfg, cfg, metrics, limiter)
+
+	if err := VisitWithRetry(c, server.URL, metrics); err != nil {
+		t.Fatalf("VisitWithRetry returned error: %v", err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("requests = %d, want 2", got)
+	}
+	if metrics.Retries != 1 || metrics.Timeouts != 1 {
+		t.Fatalf("retry metrics = retries:%d timeouts:%d, want 1 and 1", metrics.Retries, metrics.Timeouts)
+	}
+	if got := len(metrics.FailedURLsSnapshot()); got != 0 {
+		t.Fatalf("failed URLs = %d, want 0", got)
+	}
+}
+
+func TestRetryRecordsErrorStatusAndSuccessfulResponse(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := DefaultScraperConfig()
+	phaseCfg := PhaseConfig{Parallelism: 1, Delay: time.Millisecond, Timeout: time.Second}
+	cfg.MinDelay = time.Millisecond
+	cfg.MaxRetries = 1
+	metrics := newPhaseMetrics("status-test")
+	c := NewCollector(phaseCfg)
+	registerMetricsHooks(c, metrics)
+	limiter := NewAdaptiveLimiter(phaseCfg, cfg)
+	registerAdaptiveHooks(c, limiter)
+	registerRetryHook(c, phaseCfg, cfg, metrics, limiter)
+
+	if err := VisitWithRetry(c, server.URL, metrics); err != nil {
+		t.Fatalf("VisitWithRetry returned error: %v", err)
+	}
+	if metrics.StatusCounts[http.StatusServiceUnavailable] != 1 || metrics.StatusCounts[http.StatusOK] != 1 {
+		t.Fatalf("status counts = %#v, want one 503 and one 200", metrics.StatusCounts)
 	}
 }
 

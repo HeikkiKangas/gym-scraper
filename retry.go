@@ -31,6 +31,11 @@ func ShouldRetry(statusCode int, err error) bool {
 		strings.Contains(message, "server misbehaving")
 }
 
+func IsTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
 func RetryDelay(attempt int, baseDelay time.Duration) time.Duration {
 	if attempt < 1 {
 		attempt = 1
@@ -65,11 +70,18 @@ func ParseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 func VisitWithRetry(c *colly.Collector, rawURL string, metrics *PhaseMetrics) error {
 	ctx := colly.NewContext()
 	ctx.Put("attempt", 0)
-	return c.Request(http.MethodGet, rawURL, nil, ctx, nil)
+	err := c.Request(http.MethodGet, rawURL, nil, ctx, nil)
+	if handled, _ := ctx.GetAny("errorHandled").(bool); handled {
+		return nil
+	}
+	return err
 }
 
 func registerRetryHook(c *colly.Collector, phaseCfg PhaseConfig, cfg ScraperConfig, metrics *PhaseMetrics, limiter *AdaptiveLimiter) {
 	c.OnError(func(r *colly.Response, err error) {
+		if r != nil && r.Ctx != nil {
+			r.Ctx.Put("errorHandled", true)
+		}
 		if r == nil || r.Request == nil || !ShouldRetry(r.StatusCode, err) {
 			if r != nil && r.Request != nil {
 				metrics.RecordFailedURL(r.Request.URL.String())
@@ -95,8 +107,13 @@ func registerRetryHook(c *colly.Collector, phaseCfg PhaseConfig, cfg ScraperConf
 
 		metrics.RecordRetry()
 		r.Ctx.Put("attempt", nextAttempt)
-		fmt.Printf("retry phase=%s url=%s status=%d attempt=%d retry_in=%s\n",
-			metrics.Name, r.Request.URL, r.StatusCode, nextAttempt, delay.Round(time.Millisecond))
+		if IsTimeout(err) {
+			fmt.Printf("timeout phase=%s url=%s attempt=%d timeout=%s retry_in=%s\n",
+				metrics.Name, r.Request.URL, nextAttempt, phaseCfg.Timeout, delay.Round(time.Millisecond))
+		} else {
+			fmt.Printf("retry phase=%s url=%s status=%d attempt=%d retry_in=%s\n",
+				metrics.Name, r.Request.URL, r.StatusCode, nextAttempt, delay.Round(time.Millisecond))
+		}
 		time.Sleep(delay)
 		if retryErr := r.Request.Retry(); retryErr != nil {
 			metrics.RecordFailedURL(r.Request.URL.String())

@@ -17,6 +17,26 @@ Small Go CLI scraper that collects gym contact emails from `kuntosali.fi`.
 go run .
 ```
 
+The scraper defaults to a 30-second request timeout and retries transient failures
+up to three times with exponential backoff. Tune a run without recompiling:
+
+```bash
+SCRAPER_GYM_PARALLELISM=8 SCRAPER_INITIAL_DELAY_SECONDS=2 go run .
+```
+
+Supported variables:
+
+- `SCRAPER_CITY_PARALLELISM`
+- `SCRAPER_GYM_PARALLELISM`
+- `SCRAPER_EMAIL_PARALLELISM`
+- `SCRAPER_INITIAL_DELAY_SECONDS`
+- `SCRAPER_RANDOM_DELAY_SECONDS`
+- `SCRAPER_TIMEOUT_SECONDS`
+- `SCRAPER_MAX_RETRIES`
+
+A timeout between 15 and 60 seconds is recommended. Timeout, throttle, retry,
+status, latency, and failed-URL metrics are printed separately for each phase.
+
 Expected output includes progress logs:
 - `Collecting cities`
 - `Collecting gyms`

@@ -1,9 +1,7 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -79,8 +77,7 @@ func (m *PhaseMetrics) RecordFailure(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.RequestsFailed++
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	if IsTimeout(err) {
 		m.Timeouts++
 	}
 }
@@ -107,6 +104,7 @@ func registerMetricsHooks(c *colly.Collector, metrics *PhaseMetrics) {
 	c.OnRequest(func(r *colly.Request) {
 		metrics.RecordRequestStart()
 		r.Ctx.Put("startedAt", time.Now())
+		r.Ctx.Put("metricsResponseRecorded", false)
 	})
 	c.OnResponse(func(r *colly.Response) {
 		startedAt, ok := r.Ctx.GetAny("startedAt").(time.Time)
@@ -114,8 +112,20 @@ func registerMetricsHooks(c *colly.Collector, metrics *PhaseMetrics) {
 			startedAt = time.Now()
 		}
 		metrics.RecordResponse(r.StatusCode, time.Since(startedAt))
+		r.Ctx.Put("metricsResponseRecorded", true)
 	})
-	c.OnError(func(_ *colly.Response, err error) {
+	c.OnError(func(r *colly.Response, err error) {
+		if r != nil && r.StatusCode > 0 {
+			recorded, _ := r.Ctx.GetAny("metricsResponseRecorded").(bool)
+			if !recorded {
+				startedAt, ok := r.Ctx.GetAny("startedAt").(time.Time)
+				if !ok {
+					startedAt = time.Now()
+				}
+				metrics.RecordResponse(r.StatusCode, time.Since(startedAt))
+				r.Ctx.Put("metricsResponseRecorded", true)
+			}
+		}
 		metrics.RecordFailure(err)
 	})
 }
