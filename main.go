@@ -16,11 +16,12 @@ const DELAY = 60
 const RANDOM_DELAY = 120
 const TIMEOUT = 120
 
-func GetCities() []string {
+func GetCities(metrics *PhaseMetrics) []string {
 	cities := []string{}
 
 	c := colly.NewCollector(colly.CacheDir("./cache"))
 	c.SetRequestTimeout(TIMEOUT * time.Second)
+	registerMetricsHooks(c, metrics)
 
 	c.OnHTML("div.kaupunkilaatikko form#kaupunki-valinta select#kaupunki", func(e *colly.HTMLElement) {
 		cities = append(cities, parseCitiesFromSelection(e.DOM)...)
@@ -35,7 +36,7 @@ func GetCities() []string {
 	return cities
 }
 
-func GetGyms(cities []string) []string {
+func GetGyms(cities []string, metrics *PhaseMetrics) []string {
 	gyms := []string{}
 	var mu sync.Mutex
 
@@ -46,6 +47,7 @@ func GetGyms(cities []string) []string {
 		RandomDelay: RANDOM_DELAY * time.Second,
 	})
 	c.SetRequestTimeout(TIMEOUT * time.Second)
+	registerMetricsHooks(c, metrics)
 
 	c.OnHTML("div.salilistaus-simple a.salin-nimi-kaupunki[href]", func(e *colly.HTMLElement) {
 		url, ok := parseGymURLFromElement(e)
@@ -70,7 +72,7 @@ func GetGyms(cities []string) []string {
 	return gyms
 }
 
-func GetEmails(gyms []string) []string {
+func GetEmails(gyms []string, metrics *PhaseMetrics) []string {
 	emails := []string{}
 	var mu sync.Mutex
 
@@ -81,6 +83,7 @@ func GetEmails(gyms []string) []string {
 		RandomDelay: RANDOM_DELAY * time.Second,
 	})
 	c.SetRequestTimeout(TIMEOUT * time.Second)
+	registerMetricsHooks(c, metrics)
 
 	c.OnHTML("div.sali-data div#salin-info p", func(e *colly.HTMLElement) {
 		email, ok := parseEmailFromText(e.Text)
@@ -109,18 +112,33 @@ func GetEmails(gyms []string) []string {
 
 func main() {
 	startTime := time.Now()
+	metrics := NewScraperMetrics()
 
 	fmt.Println("Collecting cities")
-	cities := GetCities()
+	metrics.Cities.Start()
+	cities := GetCities(&metrics.Cities)
+	metrics.Cities.Finish()
+	fmt.Printf("Cities found: %d\n", len(cities))
+	fmt.Printf("City phase elapsed: %.1f seconds\n", metrics.Cities.FinishedAt.Sub(metrics.Cities.StartedAt).Seconds())
+	metrics.Cities.PrintSummary()
 
 	fmt.Println("Collecting gyms")
-	gyms := GetGyms(cities)
+	metrics.Gyms.Start()
+	gyms := GetGyms(cities, &metrics.Gyms)
+	metrics.Gyms.Finish()
+	fmt.Printf("Gym URLs found: %d\n", len(gyms))
+	fmt.Printf("Gym phase elapsed: %.1f seconds\n", metrics.Gyms.FinishedAt.Sub(metrics.Gyms.StartedAt).Seconds())
+	metrics.Gyms.PrintSummary()
 
 	fmt.Println("Collecting emails")
-	emails := GetEmails(gyms)
+	metrics.Emails.Start()
+	emails := GetEmails(gyms, &metrics.Emails)
+	metrics.Emails.Finish()
+	fmt.Printf("Emails found: %d\n", len(emails))
+	fmt.Printf("Email phase elapsed: %.1f seconds\n", metrics.Emails.FinishedAt.Sub(metrics.Emails.StartedAt).Seconds())
+	metrics.Emails.PrintSummary()
 
-	fmt.Println("Emails found: ", len(emails))
-	fmt.Printf("Finished in %v seconds\n", time.Since(startTime).Seconds())
+	fmt.Printf("Total elapsed: %.1f seconds\n", time.Since(startTime).Seconds())
 
 	if err := os.WriteFile("emails.txt", []byte(strings.Join(emails, "\n")), 0644); err != nil {
 		fmt.Println("Failed to write emails.txt:", err)
