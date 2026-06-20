@@ -11,17 +11,18 @@ import (
 	"github.com/gocolly/colly"
 )
 
-const PARALLELISM = 4
-const DELAY = 60
-const RANDOM_DELAY = 120
-const TIMEOUT = 120
-
-func GetCities(metrics *PhaseMetrics) []string {
+func GetCities(cfg ScraperConfig, metrics *PhaseMetrics) []string {
 	cities := []string{}
 
 	c := colly.NewCollector(colly.CacheDir("./cache"))
-	c.SetRequestTimeout(TIMEOUT * time.Second)
+	c.Limit(&colly.LimitRule{
+		DomainGlob:  "*",
+		Parallelism: cfg.CityParallelism,
+		RandomDelay: cfg.RandomDelay,
+	})
+	c.SetRequestTimeout(cfg.Timeout)
 	registerMetricsHooks(c, metrics)
+	registerAdaptiveHooks(c, NewAdaptiveLimiter(cfg))
 
 	c.OnHTML("div.kaupunkilaatikko form#kaupunki-valinta select#kaupunki", func(e *colly.HTMLElement) {
 		cities = append(cities, parseCitiesFromSelection(e.DOM)...)
@@ -36,18 +37,19 @@ func GetCities(metrics *PhaseMetrics) []string {
 	return cities
 }
 
-func GetGyms(cities []string, metrics *PhaseMetrics) []string {
+func GetGyms(cities []string, cfg ScraperConfig, metrics *PhaseMetrics) []string {
 	gyms := []string{}
 	var mu sync.Mutex
 
 	c := colly.NewCollector(colly.Async(true), colly.CacheDir("./cache"))
 	c.Limit(&colly.LimitRule{
-		Parallelism: PARALLELISM,
-		Delay:       DELAY * time.Second,
-		RandomDelay: RANDOM_DELAY * time.Second,
+		DomainGlob:  "*",
+		Parallelism: cfg.GymParallelism,
+		RandomDelay: cfg.RandomDelay,
 	})
-	c.SetRequestTimeout(TIMEOUT * time.Second)
+	c.SetRequestTimeout(cfg.Timeout)
 	registerMetricsHooks(c, metrics)
+	registerAdaptiveHooks(c, NewAdaptiveLimiter(cfg))
 
 	c.OnHTML("div.salilistaus-simple a.salin-nimi-kaupunki[href]", func(e *colly.HTMLElement) {
 		url, ok := parseGymURLFromElement(e)
@@ -72,18 +74,19 @@ func GetGyms(cities []string, metrics *PhaseMetrics) []string {
 	return gyms
 }
 
-func GetEmails(gyms []string, metrics *PhaseMetrics) []string {
+func GetEmails(gyms []string, cfg ScraperConfig, metrics *PhaseMetrics) []string {
 	emails := []string{}
 	var mu sync.Mutex
 
 	c := colly.NewCollector(colly.Async(true), colly.CacheDir("./cache"))
 	c.Limit(&colly.LimitRule{
-		Parallelism: PARALLELISM,
-		Delay:       DELAY * time.Second,
-		RandomDelay: RANDOM_DELAY * time.Second,
+		DomainGlob:  "*",
+		Parallelism: cfg.EmailParallelism,
+		RandomDelay: cfg.RandomDelay,
 	})
-	c.SetRequestTimeout(TIMEOUT * time.Second)
+	c.SetRequestTimeout(cfg.Timeout)
 	registerMetricsHooks(c, metrics)
+	registerAdaptiveHooks(c, NewAdaptiveLimiter(cfg))
 
 	c.OnHTML("div.sali-data div#salin-info p", func(e *colly.HTMLElement) {
 		email, ok := parseEmailFromText(e.Text)
@@ -113,10 +116,15 @@ func GetEmails(gyms []string, metrics *PhaseMetrics) []string {
 func main() {
 	startTime := time.Now()
 	metrics := NewScraperMetrics()
+	cfg, err := LoadScraperConfig()
+	if err != nil {
+		fmt.Println("Invalid scraper configuration:", err)
+		os.Exit(2)
+	}
 
 	fmt.Println("Collecting cities")
 	metrics.Cities.Start()
-	cities := GetCities(&metrics.Cities)
+	cities := GetCities(cfg, &metrics.Cities)
 	metrics.Cities.Finish()
 	fmt.Printf("Cities found: %d\n", len(cities))
 	fmt.Printf("City phase elapsed: %.1f seconds\n", metrics.Cities.FinishedAt.Sub(metrics.Cities.StartedAt).Seconds())
@@ -124,7 +132,7 @@ func main() {
 
 	fmt.Println("Collecting gyms")
 	metrics.Gyms.Start()
-	gyms := GetGyms(cities, &metrics.Gyms)
+	gyms := GetGyms(cities, cfg, &metrics.Gyms)
 	metrics.Gyms.Finish()
 	fmt.Printf("Gym URLs found: %d\n", len(gyms))
 	fmt.Printf("Gym phase elapsed: %.1f seconds\n", metrics.Gyms.FinishedAt.Sub(metrics.Gyms.StartedAt).Seconds())
@@ -132,7 +140,7 @@ func main() {
 
 	fmt.Println("Collecting emails")
 	metrics.Emails.Start()
-	emails := GetEmails(gyms, &metrics.Emails)
+	emails := GetEmails(gyms, cfg, &metrics.Emails)
 	metrics.Emails.Finish()
 	fmt.Printf("Emails found: %d\n", len(emails))
 	fmt.Printf("Email phase elapsed: %.1f seconds\n", metrics.Emails.FinishedAt.Sub(metrics.Emails.StartedAt).Seconds())
