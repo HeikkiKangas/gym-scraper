@@ -18,11 +18,13 @@ func TestLoadScraperConfigFromEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadScraperConfig returned error: %v", err)
 	}
-	if cfg.CityParallelism != 3 || cfg.GymParallelism != 8 || cfg.EmailParallelism != 9 {
+	if cfg.Cities.Parallelism != 3 || cfg.Gyms.Parallelism != 8 || cfg.Emails.Parallelism != 9 {
 		t.Fatalf("unexpected parallelism configuration: %#v", cfg)
 	}
-	if cfg.InitialDelay != 4*time.Second || cfg.RandomDelay != 6*time.Second || cfg.Timeout != 20*time.Second {
-		t.Fatalf("unexpected duration configuration: %#v", cfg)
+	for name, phase := range map[string]PhaseConfig{"cities": cfg.Cities, "gyms": cfg.Gyms, "emails": cfg.Emails} {
+		if phase.Delay != 4*time.Second || phase.RandomDelay != 6*time.Second || phase.Timeout != 20*time.Second {
+			t.Fatalf("unexpected %s phase configuration: %#v", name, phase)
+		}
 	}
 	if cfg.MaxRetries != 5 {
 		t.Fatalf("MaxRetries = %d, want 5", cfg.MaxRetries)
@@ -38,7 +40,7 @@ func TestLoadScraperConfigRejectsInvalidValues(t *testing.T) {
 
 func TestAdaptiveLimiterRespondsToServerHealth(t *testing.T) {
 	cfg := DefaultScraperConfig()
-	limiter := NewAdaptiveLimiter(cfg)
+	limiter := NewAdaptiveLimiter(cfg.Emails, cfg)
 
 	limiter.Observe(429, nil)
 	if got := limiter.Delay(); got != 4*time.Second {

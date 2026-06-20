@@ -62,13 +62,13 @@ func ParseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	return delay, true
 }
 
-func VisitWithRetry(c *colly.Collector, rawURL string, cfg ScraperConfig, metrics *PhaseMetrics) error {
+func VisitWithRetry(c *colly.Collector, rawURL string, metrics *PhaseMetrics) error {
 	ctx := colly.NewContext()
 	ctx.Put("attempt", 0)
 	return c.Request(http.MethodGet, rawURL, nil, ctx, nil)
 }
 
-func registerRetryHook(c *colly.Collector, cfg ScraperConfig, metrics *PhaseMetrics) {
+func registerRetryHook(c *colly.Collector, phaseCfg PhaseConfig, cfg ScraperConfig, metrics *PhaseMetrics, limiter *AdaptiveLimiter) {
 	c.OnError(func(r *colly.Response, err error) {
 		if r == nil || r.Request == nil || !ShouldRetry(r.StatusCode, err) {
 			if r != nil && r.Request != nil {
@@ -86,7 +86,7 @@ func registerRetryHook(c *colly.Collector, cfg ScraperConfig, metrics *PhaseMetr
 		}
 
 		nextAttempt := attempt + 1
-		delay := RetryDelay(nextAttempt, cfg.InitialDelay)
+		delay := max(RetryDelay(nextAttempt, phaseCfg.Delay), limiter.Delay())
 		if r.StatusCode == http.StatusTooManyRequests {
 			if retryAfter, ok := ParseRetryAfter(r.Headers.Get("Retry-After"), time.Now()); ok {
 				delay = retryAfter

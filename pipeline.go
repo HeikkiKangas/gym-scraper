@@ -75,14 +75,14 @@ func ProduceGymURLs(
 	jobs := make(chan string)
 	seen := make(map[string]struct{})
 	var seenMu sync.Mutex
-	limiter := NewAdaptiveLimiter(cfg)
+	limiter := NewAdaptiveLimiter(cfg.Gyms, cfg)
 	var workers sync.WaitGroup
 
-	for range cfg.GymParallelism {
+	for range cfg.Gyms.Parallelism {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			c := newPipelineCollector(cfg, limiter, metrics)
+			c := newPipelineCollector(cfg.Gyms, cfg, limiter, metrics)
 			c.OnHTML("div.salilistaus-simple a.salin-nimi-kaupunki[href]", func(e *colly.HTMLElement) {
 				normalized, ok := NormalizeURL(e.Attr("href"))
 				if !ok {
@@ -117,7 +117,7 @@ func ProduceGymURLs(
 					if !ok {
 						return
 					}
-					if err := VisitWithRetry(c, city, cfg, metrics); err != nil {
+					if err := VisitWithRetry(c, city, metrics); err != nil {
 						metrics.RecordFailedURL(city)
 						fmt.Printf("Failed to schedule city URL %s: %v\n", city, err)
 					}
@@ -140,13 +140,13 @@ func ProduceGymURLs(
 }
 
 func ConsumeGymURLs(ctx context.Context, in <-chan string, out chan<- string, cfg ScraperConfig, metrics *PhaseMetrics) {
-	limiter := NewAdaptiveLimiter(cfg)
+	limiter := NewAdaptiveLimiter(cfg.Emails, cfg)
 	var workers sync.WaitGroup
-	for range cfg.EmailParallelism {
+	for range cfg.Emails.Parallelism {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			c := newPipelineCollector(cfg, limiter, metrics)
+			c := newPipelineCollector(cfg.Emails, cfg, limiter, metrics)
 			c.OnHTML("div.sali-data div#salin-info p", func(e *colly.HTMLElement) {
 				email, ok := parseEmailFromText(e.Text)
 				if !ok {
@@ -169,7 +169,7 @@ func ConsumeGymURLs(ctx context.Context, in <-chan string, out chan<- string, cf
 					if !ok {
 						return
 					}
-					if err := VisitWithRetry(c, gym, cfg, metrics); err != nil {
+					if err := VisitWithRetry(c, gym, metrics); err != nil {
 						metrics.RecordFailedURL(gym)
 						fmt.Printf("Failed to schedule gym URL %s: %v\n", gym, err)
 					}
@@ -193,13 +193,13 @@ func CollectEmails(in <-chan string) []string {
 	return emails
 }
 
-func newPipelineCollector(cfg ScraperConfig, limiter *AdaptiveLimiter, metrics *PhaseMetrics) *colly.Collector {
-	c := colly.NewCollector(colly.CacheDir("./cache"))
-	c.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 1, RandomDelay: cfg.RandomDelay})
-	c.SetRequestTimeout(cfg.Timeout)
+func newPipelineCollector(phaseCfg PhaseConfig, cfg ScraperConfig, limiter *AdaptiveLimiter, metrics *PhaseMetrics) *colly.Collector {
+	workerCfg := phaseCfg
+	workerCfg.Parallelism = 1
+	c := NewCollector(workerCfg)
 	registerMetricsHooks(c, metrics)
 	registerAdaptiveHooks(c, limiter)
-	registerRetryHook(c, cfg, metrics)
+	registerRetryHook(c, phaseCfg, cfg, metrics, limiter)
 	return c
 }
 

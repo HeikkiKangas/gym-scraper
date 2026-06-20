@@ -7,32 +7,48 @@ import (
 	"time"
 )
 
-type ScraperConfig struct {
-	CityParallelism  int
-	GymParallelism   int
-	EmailParallelism int
+type PhaseConfig struct {
+	Parallelism int
+	Delay       time.Duration
+	RandomDelay time.Duration
+	Timeout     time.Duration
+}
 
-	InitialDelay time.Duration
-	MinDelay     time.Duration
-	MaxDelay     time.Duration
-	RandomDelay  time.Duration
-	Timeout      time.Duration
-	MaxRetries   int
+type ScraperConfig struct {
+	Cities PhaseConfig
+	Gyms   PhaseConfig
+	Emails PhaseConfig
+
+	MinDelay   time.Duration
+	MaxDelay   time.Duration
+	MaxRetries int
 
 	ThrottleStatusCode map[int]bool
 }
 
 func DefaultScraperConfig() ScraperConfig {
 	return ScraperConfig{
-		CityParallelism:  2,
-		GymParallelism:   6,
-		EmailParallelism: 6,
-		InitialDelay:     2 * time.Second,
-		MinDelay:         time.Second,
-		MaxDelay:         60 * time.Second,
-		RandomDelay:      5 * time.Second,
-		Timeout:          30 * time.Second,
-		MaxRetries:       3,
+		Cities: PhaseConfig{
+			Parallelism: 2,
+			Delay:       2 * time.Second,
+			RandomDelay: 3 * time.Second,
+			Timeout:     30 * time.Second,
+		},
+		Gyms: PhaseConfig{
+			Parallelism: 4,
+			Delay:       2 * time.Second,
+			RandomDelay: 5 * time.Second,
+			Timeout:     30 * time.Second,
+		},
+		Emails: PhaseConfig{
+			Parallelism: 6,
+			Delay:       2 * time.Second,
+			RandomDelay: 5 * time.Second,
+			Timeout:     30 * time.Second,
+		},
+		MinDelay:   time.Second,
+		MaxDelay:   60 * time.Second,
+		MaxRetries: 3,
 		ThrottleStatusCode: map[int]bool{
 			403: true,
 			429: true,
@@ -48,32 +64,41 @@ func LoadScraperConfig() (ScraperConfig, error) {
 	cfg := DefaultScraperConfig()
 
 	integerValues := []struct {
-		name   string
-		target *int
+		name      string
+		target    *int
+		allowZero bool
 	}{
-		{"SCRAPER_CITY_PARALLELISM", &cfg.CityParallelism},
-		{"SCRAPER_GYM_PARALLELISM", &cfg.GymParallelism},
-		{"SCRAPER_EMAIL_PARALLELISM", &cfg.EmailParallelism},
-		{"SCRAPER_MAX_RETRIES", &cfg.MaxRetries},
+		{"SCRAPER_CITY_PARALLELISM", &cfg.Cities.Parallelism, false},
+		{"SCRAPER_GYM_PARALLELISM", &cfg.Gyms.Parallelism, false},
+		{"SCRAPER_EMAIL_PARALLELISM", &cfg.Emails.Parallelism, false},
+		{"SCRAPER_MAX_RETRIES", &cfg.MaxRetries, true},
 	}
 	for _, value := range integerValues {
-		if err := loadPositiveInt(value.name, value.target, value.name == "SCRAPER_MAX_RETRIES"); err != nil {
+		if err := loadPositiveInt(value.name, value.target, value.allowZero); err != nil {
 			return ScraperConfig{}, err
 		}
 	}
 
-	durationValues := []struct {
-		name   string
-		target *time.Duration
-	}{
-		{"SCRAPER_INITIAL_DELAY_SECONDS", &cfg.InitialDelay},
-		{"SCRAPER_RANDOM_DELAY_SECONDS", &cfg.RandomDelay},
-		{"SCRAPER_TIMEOUT_SECONDS", &cfg.Timeout},
+	if delay, ok, err := loadSeconds("SCRAPER_INITIAL_DELAY_SECONDS"); err != nil {
+		return ScraperConfig{}, err
+	} else if ok {
+		cfg.Cities.Delay = delay
+		cfg.Gyms.Delay = delay
+		cfg.Emails.Delay = delay
 	}
-	for _, value := range durationValues {
-		if err := loadSeconds(value.name, value.target); err != nil {
-			return ScraperConfig{}, err
-		}
+	if delay, ok, err := loadSeconds("SCRAPER_RANDOM_DELAY_SECONDS"); err != nil {
+		return ScraperConfig{}, err
+	} else if ok {
+		cfg.Cities.RandomDelay = delay
+		cfg.Gyms.RandomDelay = delay
+		cfg.Emails.RandomDelay = delay
+	}
+	if timeout, ok, err := loadSeconds("SCRAPER_TIMEOUT_SECONDS"); err != nil {
+		return ScraperConfig{}, err
+	} else if ok {
+		cfg.Cities.Timeout = timeout
+		cfg.Gyms.Timeout = timeout
+		cfg.Emails.Timeout = timeout
 	}
 
 	return cfg, nil
@@ -92,15 +117,14 @@ func loadPositiveInt(name string, target *int, allowZero bool) error {
 	return nil
 }
 
-func loadSeconds(name string, target *time.Duration) error {
+func loadSeconds(name string) (time.Duration, bool, error) {
 	raw, ok := os.LookupEnv(name)
 	if !ok {
-		return nil
+		return 0, false, nil
 	}
 	seconds, err := strconv.Atoi(raw)
 	if err != nil || seconds < 0 {
-		return fmt.Errorf("%s must be a non-negative integer", name)
+		return 0, false, fmt.Errorf("%s must be a non-negative integer", name)
 	}
-	*target = time.Duration(seconds) * time.Second
-	return nil
+	return time.Duration(seconds) * time.Second, true, nil
 }

@@ -13,16 +13,11 @@ import (
 func GetCities(cfg ScraperConfig, metrics *PhaseMetrics) []string {
 	cities := []string{}
 
-	c := colly.NewCollector(colly.CacheDir("./cache"))
-	c.Limit(&colly.LimitRule{
-		DomainGlob:  "*",
-		Parallelism: cfg.CityParallelism,
-		RandomDelay: cfg.RandomDelay,
-	})
-	c.SetRequestTimeout(cfg.Timeout)
+	c := NewCollector(cfg.Cities)
 	registerMetricsHooks(c, metrics)
-	registerAdaptiveHooks(c, NewAdaptiveLimiter(cfg))
-	registerRetryHook(c, cfg, metrics)
+	limiter := NewAdaptiveLimiter(cfg.Cities, cfg)
+	registerAdaptiveHooks(c, limiter)
+	registerRetryHook(c, cfg.Cities, cfg, metrics, limiter)
 
 	c.OnHTML("div.kaupunkilaatikko form#kaupunki-valinta select#kaupunki", func(e *colly.HTMLElement) {
 		cities = append(cities, parseCitiesFromSelection(e.DOM)...)
@@ -32,7 +27,7 @@ func GetCities(cfg ScraperConfig, metrics *PhaseMetrics) []string {
 		fmt.Println("Request URL:", r.Request.URL, "\nError:", e)
 	})
 
-	if err := VisitWithRetry(c, "https://kuntosali.fi", cfg, metrics); err != nil {
+	if err := VisitWithRetry(c, "https://kuntosali.fi", metrics); err != nil {
 		metrics.RecordFailedURL("https://kuntosali.fi")
 		fmt.Println("Failed to schedule city collection:", err)
 	}

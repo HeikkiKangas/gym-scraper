@@ -31,12 +31,15 @@ func TestPipelineDeduplicatesGymURLsAndEmails(t *testing.T) {
 	defer server.Close()
 
 	cfg := DefaultScraperConfig()
-	cfg.GymParallelism = 2
-	cfg.EmailParallelism = 2
-	cfg.InitialDelay = 0
+	cfg.Gyms.Parallelism = 2
+	cfg.Emails.Parallelism = 2
+	cfg.Gyms.Delay = 0
+	cfg.Emails.Delay = 0
 	cfg.MinDelay = 0
-	cfg.RandomDelay = 0
-	cfg.Timeout = 2 * time.Second
+	cfg.Gyms.RandomDelay = 0
+	cfg.Emails.RandomDelay = 0
+	cfg.Gyms.Timeout = 2 * time.Second
+	cfg.Emails.Timeout = 2 * time.Second
 	cfg.MaxRetries = 0
 	metrics := NewScraperMetrics()
 	gymCh := make(chan string, 2)

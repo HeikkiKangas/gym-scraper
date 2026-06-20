@@ -19,9 +19,9 @@ type AdaptiveLimiter struct {
 	nextRequest      time.Time
 }
 
-func NewAdaptiveLimiter(cfg ScraperConfig) *AdaptiveLimiter {
+func NewAdaptiveLimiter(phaseCfg PhaseConfig, cfg ScraperConfig) *AdaptiveLimiter {
 	return &AdaptiveLimiter{
-		delay:    cfg.InitialDelay,
+		delay:    phaseCfg.Delay,
 		minDelay: cfg.MinDelay,
 		maxDelay: cfg.MaxDelay,
 	}
@@ -78,9 +78,6 @@ func (l *AdaptiveLimiter) Delay() time.Duration {
 }
 
 func registerAdaptiveHooks(c *colly.Collector, limiter *AdaptiveLimiter) {
-	c.OnRequest(func(_ *colly.Request) {
-		_ = limiter.Wait(context.Background())
-	})
 	c.OnResponse(func(r *colly.Response) {
 		limiter.Observe(r.StatusCode, nil)
 	})
