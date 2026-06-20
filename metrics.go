@@ -24,6 +24,7 @@ type PhaseMetrics struct {
 	Throttles        int64
 	StatusCounts     map[int]int64
 	Latencies        []time.Duration
+	FailedURLs       []string
 	mu               sync.Mutex
 }
 
@@ -90,6 +91,12 @@ func (m *PhaseMetrics) RecordRetry() {
 	m.Retries++
 }
 
+func (m *PhaseMetrics) RecordFailedURL(rawURL string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.FailedURLs = append(m.FailedURLs, rawURL)
+}
+
 func registerMetricsHooks(c *colly.Collector, metrics *PhaseMetrics) {
 	c.OnRequest(func(r *colly.Request) {
 		metrics.RecordRequestStart()
@@ -117,6 +124,7 @@ func (m *PhaseMetrics) PrintSummary() {
 	retries := m.Retries
 	timeouts := m.Timeouts
 	throttles := m.Throttles
+	failedURLs := len(m.FailedURLs)
 	statuses := make(map[int]int64, len(m.StatusCounts))
 	for status, count := range m.StatusCounts {
 		statuses[status] = count
@@ -154,5 +162,6 @@ func (m *PhaseMetrics) PrintSummary() {
 	fmt.Printf("Status: %s\n", statusSummary)
 	fmt.Printf("Latency: avg=%s, p95=%s\n", average.Round(time.Millisecond), p95.Round(time.Millisecond))
 	fmt.Printf("Timeouts: %d, throttles: %d\n", timeouts, throttles)
+	fmt.Printf("Failed URLs: %d\n", failedURLs)
 	fmt.Printf("Elapsed: %.1fs\n", finishedAt.Sub(startedAt).Seconds())
 }

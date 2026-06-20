@@ -23,6 +23,7 @@ func GetCities(cfg ScraperConfig, metrics *PhaseMetrics) []string {
 	c.SetRequestTimeout(cfg.Timeout)
 	registerMetricsHooks(c, metrics)
 	registerAdaptiveHooks(c, NewAdaptiveLimiter(cfg))
+	registerRetryHook(c, cfg, metrics)
 
 	c.OnHTML("div.kaupunkilaatikko form#kaupunki-valinta select#kaupunki", func(e *colly.HTMLElement) {
 		cities = append(cities, parseCitiesFromSelection(e.DOM)...)
@@ -32,7 +33,10 @@ func GetCities(cfg ScraperConfig, metrics *PhaseMetrics) []string {
 		fmt.Println("Request URL:", r.Request.URL, "\nError:", e)
 	})
 
-	c.Visit("https://kuntosali.fi")
+	if err := VisitWithRetry(c, "https://kuntosali.fi", cfg, metrics); err != nil {
+		metrics.RecordFailedURL("https://kuntosali.fi")
+		fmt.Println("Failed to schedule city collection:", err)
+	}
 
 	return cities
 }
@@ -50,6 +54,7 @@ func GetGyms(cities []string, cfg ScraperConfig, metrics *PhaseMetrics) []string
 	c.SetRequestTimeout(cfg.Timeout)
 	registerMetricsHooks(c, metrics)
 	registerAdaptiveHooks(c, NewAdaptiveLimiter(cfg))
+	registerRetryHook(c, cfg, metrics)
 
 	c.OnHTML("div.salilistaus-simple a.salin-nimi-kaupunki[href]", func(e *colly.HTMLElement) {
 		url, ok := parseGymURLFromElement(e)
@@ -66,7 +71,10 @@ func GetGyms(cities []string, cfg ScraperConfig, metrics *PhaseMetrics) []string
 	})
 
 	for _, city := range cities {
-		c.Visit(city)
+		if err := VisitWithRetry(c, city, cfg, metrics); err != nil {
+			metrics.RecordFailedURL(city)
+			fmt.Printf("Failed to schedule city URL %s: %v\n", city, err)
+		}
 	}
 
 	c.Wait()
@@ -87,6 +95,7 @@ func GetEmails(gyms []string, cfg ScraperConfig, metrics *PhaseMetrics) []string
 	c.SetRequestTimeout(cfg.Timeout)
 	registerMetricsHooks(c, metrics)
 	registerAdaptiveHooks(c, NewAdaptiveLimiter(cfg))
+	registerRetryHook(c, cfg, metrics)
 
 	c.OnHTML("div.sali-data div#salin-info p", func(e *colly.HTMLElement) {
 		email, ok := parseEmailFromText(e.Text)
@@ -105,7 +114,10 @@ func GetEmails(gyms []string, cfg ScraperConfig, metrics *PhaseMetrics) []string
 	})
 
 	for _, gym := range gyms {
-		c.Visit(gym)
+		if err := VisitWithRetry(c, gym, cfg, metrics); err != nil {
+			metrics.RecordFailedURL(gym)
+			fmt.Printf("Failed to schedule gym URL %s: %v\n", gym, err)
+		}
 	}
 
 	c.Wait()
